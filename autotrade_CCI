@@ -1,0 +1,2169 @@
+import pandas as pd
+import numpy as np
+import time
+import datetime
+import json
+import math
+import json
+import time
+import requests
+import datetime
+import traceback
+import talib
+import ccxt
+import os
+import uuid
+import hashlib
+from urllib.parse import urlencode
+import telepot
+import telegram
+import pandas
+import openpyxl
+from scipy import stats
+from urllib.parse import urlencode
+import requests
+
+
+
+
+
+
+skip_list=""
+def get_top_k(n, market_type):
+    urgent_down = 0
+    urgent_up = 0
+    urgent_up_diff = 0
+    urgent_down_diff = 0
+    urgent_up_count = 0
+    urgent_down_count = 0
+    up_list = []
+    down_list = []
+    middle_list = []
+    markets = binance.fetch_tickers()
+    price_change_rate_sum=0
+    warning=0
+    ranking=[]
+
+
+    if market_type == 'future':
+        for market in markets.keys():
+            if market == 'NUUSDT' or market == 'KEEPUSDT'or market.find("_")>=0 or market==skip_list: # 종전에 먹었던 종목이나 211231 이란 코드가 들어간 종목 BZRXUSDT는 제외 시킨다.
+                continue
+            try:
+                df = binance.fetch_ohlcv(symbol=market, timeframe='5m', since=None, limit=50)
+                df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+                NATR_raw = talib.NATR(df['high'], df['low'], df['close'], timeperiod=10)
+                NATR = NATR_raw.iloc[-1]
+                MFI_raw = talib.MFI(df['high'], df['low'], df['close'], df['volume'], timeperiod=14)
+                MFI = MFI_raw.iloc[-1]
+                MFI_before = MFI_raw.iloc[-2]
+                ADX_RAW = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
+                ADX = ADX_RAW.iloc[-1]
+                ADX_BEFORE = ADX_RAW.iloc[-2]
+                CCI_raw = talib.CCI(df['high'], df['low'], df['close'], timeperiod=14)
+                CCI = CCI_raw.iloc[-1]
+                price_change_rate = float(markets[market]['info']['priceChangePercent'])
+                ranking.append([market,price_change_rate])
+            except:
+                continue
+            if market.endswith("/USDT") and market.find("UP") <= 0 and market.find("DOWN") <= 0 and 0<float(markets[market]['info']['priceChangePercent'])<20 and NATR > 0.4 and ADX<25 and (CCI>100 or -100>CCI): #24시간 상승률이 20퍼 이내이고, NATR 0.5% 이하인 것을 추려냄
+                PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                PLUS_DI = PLUS_DI_RAW.iloc[-1]
+                MINUS_DI = MINUS_DI_RAW.iloc[-1]
+
+                if PLUS_DI>MINUS_DI and ADX>20 and ADX-ADX_BEFORE>0:
+                    urgent_up=1
+                else:
+                    urgent_up=0
+                up_list.append([market, price_change_rate,urgent_up,ADX])
+
+
+
+            if market.endswith("/USDT") and market.find("UP") <= 0 and market.find("DOWN") <= 0 and -20<float(markets[market]['info']['priceChangePercent'])<0 and NATR > 0.4 and ADX<25 and (CCI>100 or -100>CCI): #24시간 상승률이 0퍼 이하이고, NATR 0.5% 이하인 것을 추려냄
+                PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                PLUS_DI = PLUS_DI_RAW.iloc[-1]
+                MINUS_DI = MINUS_DI_RAW.iloc[-1]
+
+                if PLUS_DI<MINUS_DI and ADX>20 and ADX-ADX_BEFORE>0:
+                    urgent_down=1
+                else:
+                    urgent_down=0
+                down_list.append([market, price_change_rate,urgent_down,ADX])
+
+    main_coins=["BTC/USDT","ETH/USDT","SOL/USDT"]
+    determinant_fall=0
+    determinant_rise = 0
+    for main_coin in main_coins:
+        df = binance.fetch_ohlcv(symbol=main_coin, timeframe='5m', since=None, limit=50)
+        df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+        ADX_RAW = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
+        ADX = ADX_RAW.iloc[-1]
+        ADX_BEFORE = ADX_RAW.iloc[-2]
+        PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+        MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+        PLUS_DI = PLUS_DI_RAW.iloc[-1]
+        MINUS_DI = MINUS_DI_RAW.iloc[-1]
+        df_pearson = df.iloc[-6:-1]
+        pearson = df_pearson.corr(method='pearson')
+        pearson_high = pearson['high'][0]
+        pearson_low = pearson['low'][0]
+        if ADX>25 and ADX-ADX_BEFORE>0 and MINUS_DI>PLUS_DI:
+            determinant_fall=determinant_fall+1
+        if ADX>25 and ADX-ADX_BEFORE>0 and MINUS_DI<PLUS_DI:
+            determinant_rise=determinant_rise+1
+
+
+    ranking.sort(key=lambda x: x[1], reverse=True)  # 전체를 소팅한다.
+    ranking_top10=ranking[:10]
+    ranking_bottom10 = ranking[-10:]
+
+    ranking_top10_list=[]
+    ranking_bottom10_list = []
+
+    for i in range(0,10):
+        ranking_top10_list.append(ranking_top10[i][0])
+        ranking_bottom10_list.append(ranking_bottom10[i][0])
+
+    #print("중간확인:",ranking_top10_list)
+    num_up=len(up_list) #상승중인 것 갯수
+    num_down=len(down_list) #하락중인 것 갯수
+    if num_down<5:  #총 10개 종목을 가져오고, 5/5로 이븐하게 나누지만 안될경우는 상승이나 하락 쪽에 좀 더 몰아준다.
+        num_up=10-num_down
+        num_down=num_down
+    elif num_down>=5:
+        num_down=5
+        num_up=5
+    elif num_up<5:
+        num_up=num_up
+        num_down=10-num_up
+    elif num_up>=5:
+        num_up=5
+        num_down=5
+
+    up_list.sort(key=lambda x: x[1], reverse=True) #상승중인것을 내림차순 정렬한다.
+    up_list = up_list[:num_up]
+    down_list.sort(key=lambda x: x[1]) #하락중인것을 내림 차순 정렬 한다.
+    down_list = down_list[:num_down]
+    up_list_real=len(up_list)
+    down_list_real=len(down_list)
+
+    for i in up_list:
+        if i[2]==1:
+            urgent_up_count=urgent_up_count+1
+
+    for i in down_list:
+        if i[2]==1:
+            urgent_down_count=urgent_down_count+1
+
+    if down_list_real-1<=urgent_down_count and down_list_real>=3: #하락 중인것들이 -10프로 보다 낮으면 폭락 장세라고 판단하고 warning signal을 -1을 준다.
+        warning_signal=-1
+    elif up_list_real-1<=urgent_up_count and up_list_real>=3:
+        warning_signal=1
+    else:
+        warning_signal=0
+
+    top_k_list = []
+
+    for i in up_list:
+        top_k_list.append(i[0])
+
+    for t in ranking_top10_list:  # 거래하지 않을 것들은 LIST에서 뺀다.
+        if t in top_k_list:
+            top_k_list.remove(t)
+
+    for i in down_list:
+        top_k_list.append(i[0])
+
+    for t in ranking_bottom10_list:  # 거래하지 않을 것들은 LIST에서 뺀다.
+        if t in top_k_list:
+            top_k_list.remove(t)
+
+
+    return top_k_list[:n], warning_signal,determinant_fall,determinant_rise,ranking_top10_list,ranking_bottom10_list # 리스트와 워닝 시그널을 출력 해준다.
+
+
+def price_target(price_origin, profit): # 원래 가격과 매도 가격을 계산해주는 함수이다.
+    number_result = 0
+    for i in range(10): #10씩 곱해가면서 반올림햇을 때 값이 같아지는지를 확인한다.
+        b1 = price_origin * (10 ** i)
+        result = round(b1) - b1
+        # print(result)
+        if math.isclose(round(b1), b1) == True:  # 부동 소수점 문제로 인해서 math.isclose 기능을 이용하여 비교해야 한다.
+            number_result = i
+            break
+    price_candidate = round(price_origin * profit, number_result)
+    return price_candidate # 매도할 가격을 출력 해준다.
+
+
+def cal_amount(usdt_balance, target, price): #매수할 양을 계산해준다.
+    amount_wannaknow = float(binance.fetch_bids_asks(target)[target]['info']['askQty'])
+    for k in range(10):
+        b2 = amount_wannaknow * (10 ** k)
+        result2 = round(b2) - b2
+        if math.isclose(round(b2), b2) == True: #bids.asks에 걸려있는 양을 보고 소수점 몇째 자리인지 계산한다.
+            number = k
+            break
+
+    portion = 0.95
+    usdt_trade = usdt_balance * portion
+    amount = math.floor(usdt_trade / price * (10 ** number)) / (10 ** number)   # 전체 금액의 98프로 중에서 얼마나 살지를 결정한다.
+    return amount
+
+
+def get_my_price_amount(target, market_type): # 얼마에 살지와 가격을 결정해준다.
+    target_remove_slash = target.replace("/", "")
+    target_remove_slash_USDT = target.replace("/USDT", "")
+    balance = binance.fetch_balance()
+    if market_type == 'future':
+        positions = balance['info']['positions']
+        for position in positions:
+            if position["symbol"] == target_remove_slash:
+                amount = float(position['positionAmt'])
+                price = float(position['entryPrice'])
+    elif market_type == 'market':
+        amount_wannaknow = float(binance.fetch_bids_asks(target)[target]['info']['askQty'])
+        for k in range(10):
+            b2 = amount_wannaknow * (10 ** k)
+            result2 = round(b2) - b2
+            if math.isclose(round(b2), b2) == True:
+                number = k
+                break
+        amount = math.floor(balance[target_remove_slash_USDT]['free'] * (10 ** number)) / (10 ** number)
+        last_order = binance.fetch_closed_orders(target)
+        price = last_order[-1]['average']
+
+    return price, amount
+
+
+with open("binance.txt") as f: #binance.txt파일을 불러와서 로그인한다.
+    lines = f.readlines()
+    api_key = lines[0].strip()
+    secret = lines[1].strip()
+
+############################필수셋팅부위########################################
+
+
+market_type = 'future'  # 선물 거래를 할시 아래 두줄을 사용한다.
+binance = ccxt.binance(config={'apiKey': api_key, 'secret': secret, 'enableRateLimit': True,
+                               'options': {'defaultType': market_type}})  # 바이낸스 선물 로그인
+
+# market_type='market'   # 현물 거래를 할시 아래 두줄을 사용한다.
+# binance = ccxt.binance(config={'apiKey': api_key, 'secret': secret})  # 바이낸스 현물 로그인
+
+############################필수셋팅부위########################################
+
+
+
+while True:
+    filename='trade_history.xlsx'
+    trade_history=pd.read_excel(filename,index_col=0)
+    balance_raw = binance.fetch_balance() # 잔고를 확인
+    cash_start=trade_history.iloc[0]['CASH']
+    cash_end = balance_raw['USDT']['free']  # 잔고 조회
+    time_flag = False
+    complete_flag = True
+    profit = 1.02
+    hold_flag = False
+    wait_flag = False
+    forbid_flag = False
+    time_flag = True
+    list_flag = True
+    sell_flag = False
+    op_mode1 = False
+    op_mode2 = False
+    op_mode3 = False
+    op_mode4 = False
+    reverse_flag=False
+    fall_flag=False
+    rise_flag=False
+    normal_flag=False
+    warning_signal=0
+    z = 0
+    list_time_before = 0
+    remove_list = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT','BTCDOM/USDT','ETC/USDT','SOL/USDT','DODO/USDT'] #거래하지 말아야할 리스트이다.
+    # remove_list = get_top_k(1,market_type)
+    print("start", cash_end)
+
+    try:
+        while time_flag == True:
+
+            j = 1
+            k = 15  # 상승량 상위 5개를 기준으로 한다.
+            fluctuation_status=""
+            cash_end = balance_raw['USDT']['free']
+            if market_type == 'market':
+                k = 3
+            while complete_flag == True and wait_flag == False:
+                urgent_down = 0
+                urgent_up = 0
+                urgent_up_diff = 0
+                urgent_down_diff = 0
+                fluctuation_status = ""
+
+                top_list, warning_signal,determinant_fall,determinant_rise,ranking_top10_list,ranking_bottom10_list= get_top_k(k, market_type)  # 거래량 상위 몇개 종목을 가져올지 결정
+
+                if warning_signal == 0:
+                    fluctuation_status = "normal"
+                elif warning_signal == 1:
+                    fluctuation_status = "hike"
+                elif warning_signal == -1:
+                    fluctuation_status = "fall"
+
+                # print("티커선정중")
+                for t in remove_list:  # 거래하지 않을 것들은 LIST에서 뺀다.
+                    if t in top_list:
+                        top_list.remove(t)
+
+                list_time_later = time.time()
+                if list_time_later - list_time_before > 60 * 60:  # 한시간이 넘으면 상승률 리스트 보내주기
+                    list_flag = True
+
+                if list_flag == True:  # 상승률 보낸지 1시간 지나면 아래와 같이 log에다가 상승률 리스트를 보내준다.
+                    rise_list = []
+                    for targets in ranking_top10_list:
+                        markets = binance.fetch_tickers()
+                        rise_24h = round(float(markets[targets]['percentage']), 1)
+                        rise_list.append([targets, rise_24h,"/"])
+                    for targets in ranking_bottom10_list:
+                        markets = binance.fetch_tickers()
+                        rise_24h = round(float(markets[targets]['percentage']), 1)
+                        rise_list.append([targets, rise_24h,"/"])
+
+                    rise_list.append(fluctuation_status)
+                    TOKEN = '1944172418:AAGmErvA8U4yCJ6jvjpQQQNNxPjFNNLpe9k'
+                    mc = '1828960972'
+                    bot = telepot.Bot(TOKEN)
+                    msg = rise_list
+                    bot.sendMessage(mc, msg)
+                    list_time_before = time.time()
+                    list_flag = False
+                print("--------------------------------next--------------------------------------------")
+                print("조건에해당하는리스트:",top_list)  # 조건에 해당하는 종목 10개를 컴퓨터에 뿌려준다
+                print("상위10개:", ranking_top10_list)  # 상위 10개를 컴퓨터에 뿌려준다
+                print("하위10개:", ranking_bottom10_list)  # 하위 10개를 컴퓨터에 뿌려준다
+                print("status:",fluctuation_status,"/",warning_signal,"DROP_F/R:",determinant_fall,"/",determinant_rise,"time:",datetime.datetime.now())
+                if determinant_fall<3 and determinant_rise<3:
+                    normal_flag=True
+
+                if determinant_fall==3 and normal_flag==True:
+                    print("비트/이더/솔라나 급락중")
+                    fall_flag=True
+                    normal_flag=False
+
+                if determinant_rise==3 and normal_flag==True:
+                    print("비트/이더/솔라나 급등중")
+                    rise_flag=True
+                    normal_flag=False
+
+
+
+                for i in top_list:
+                    markets = binance.fetch_tickers()
+                    rise_24h = markets[i]['percentage']  # 24h 기준으로 20보다 높으면 long전략, 낮으면 short 전략을 간다
+                    op_mode1 = True  # 상승용인데.. 생각보다 상승 그리 잘 안되는듯
+                    op_mode2 = True  # 보합장용이므로 부적합
+                    op_mode3 = True  # 하락장용이므로 맞을듯
+                    op_mode4 = True  # 상승반전인데.. 애매하다.. 어떡할지..
+
+                    if market_type == 'market':  # 현물 시장은 무조건 long
+                        trade_type = 'long'
+                    price_current = binance.fetch_ticker(i)['last']  ## 여기까지 작성 완성
+
+                    df = binance.fetch_ohlcv(symbol=i, timeframe='5m', since=None, limit=50)
+                    df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+                    df15 = binance.fetch_ohlcv(symbol=i, timeframe='15m', since=None, limit=50)
+                    df15 = pd.DataFrame(data=df15, columns=["datetime", "open", "high", "low", "close", "volume"])
+                    df_pearson = df.iloc[-6:-1]
+                    pearson = df_pearson.corr(method='pearson')
+                    pearson_high = pearson['high'][0]
+                    pearson_low = pearson['low'][0]
+                    df_len=len(df_pearson)
+                    df_index = list(range(1,df_len+1))
+                    regr_high = stats.linregress(df_index, df_pearson['high'])
+                    regr_low = stats.linregress(df_index, df_pearson['low'])
+                    regr_slope_percent_high = regr_high.slope / price_current * 100
+                    regr_slope_percent_low = regr_low.slope / price_current * 100
+                    df.set_index('datetime', inplace=True)
+                    macd, macdsignal, macdhist = talib.MACD(df['close'], fastperiod=10, slowperiod=20, signalperiod=9)
+
+                    signal_now = macdhist.iloc[-1]
+                    signal_before = macdhist.iloc[-2]
+                    signal_before_before = macdhist.iloc[-3]
+                    signal_before_before_before = macdhist.iloc[-4]
+
+                    STDDEV_raw=talib.STDDEV(df['close'],timeperiod=10)
+                    STDDEV=STDDEV_raw.iloc[-1]/price_current*100
+
+                    CCI_raw = talib.CCI(df['high'], df['low'], df['close'], timeperiod=20)
+                    CCI = CCI_raw.iloc[-1]
+                    CCI_before = CCI_raw.iloc[-2]
+                    CCI_before2 = CCI_raw.iloc[-3]
+                    CCI_raw.index = pd.to_datetime(CCI_raw.index, unit='ms') + datetime.timedelta(hours=9)
+
+                    bband_upper_raw,bband_middle_raw,bband_lower_raw=talib.BBANDS(df['close'],timeperiod=15, nbdevup=2,nbdevdn=2,matype=0)
+                    bband_upper=bband_upper_raw.iloc[-1]
+                    bband_upper_before= bband_upper_raw.iloc[-2]
+                    bband_middle = bband_middle_raw.iloc[-1]
+                    bband_middle_before = bband_middle_raw.iloc[-2]
+                    slope_bband=(bband_middle-bband_middle_before)/bband_middle*100
+                    bband_lower = bband_lower_raw.iloc[-1]
+                    bband_lower_before = bband_lower_raw.iloc[-2]
+
+                    MFI_raw = talib.MFI(df['high'], df['low'], df['close'],df['volume'], timeperiod=14)
+                    MFI = MFI_raw.iloc[-1]
+                    MFI_before = MFI_raw.iloc[-2]
+                    MFI_before2 = MFI_raw.iloc[-3]
+                    MFI_raw.index = pd.to_datetime(MFI_raw.index, unit='ms') + datetime.timedelta(hours=9)
+
+                    MFI15_raw = talib.MFI(df15['high'], df15['low'], df15['close'], df15['volume'], timeperiod=14)
+                    MFI15 = MFI_raw.iloc[-1]
+                    MFI15_before = MFI_raw.iloc[-2]
+                    MFI15_before2 = MFI_raw.iloc[-3]
+
+
+                    price_open = df['open'].iloc[-1]
+                    price_high = df['high'].iloc[-1]
+                    price_low = df['low'].iloc[-1]
+
+                    volume_now = df['volume'].iloc[-1]
+                    volume_before = df['volume'].iloc[-2]
+
+                    volume_ma_raw = talib.MA(df['volume'], timeperiod=10, matype=0)
+                    volume_ma_now = volume_ma_raw.iloc[-1]
+                    volume_ma_before = volume_ma_raw.iloc[-2]
+
+                    NATR_raw = talib.NATR(df['high'], df['low'], df['close'], timeperiod=10)
+                    NATR = NATR_raw.iloc[-1]
+
+                    ADX_RAW = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
+                    ADX = ADX_RAW.iloc[-1]
+                    ADX_BEFORE = ADX_RAW.iloc[-2]
+                    ADX_BEFORE_BEFORE = ADX_RAW.iloc[-3]
+
+                    ADX15_RAW = talib.ADX(df15['high'], df15['low'], df15['close'], timeperiod=14)
+                    ADX15 = ADX15_RAW.iloc[-1]
+                    ADX15_BEFORE = ADX15_RAW.iloc[-2]
+                    ADX15_BEFORE_BEFORE = ADX15_RAW.iloc[-3]
+
+                    slowk, slowd = talib.STOCH(df['high'], df['low'], df['close'], fastk_period=10, slowk_period=3,
+                                               slowd_period=3)
+                    STOCH_K = slowk.iloc[-1]
+                    STOCH_D = slowd.iloc[-1]
+
+                    PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=10)
+                    MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=10)
+                    PLUS_DI = PLUS_DI_RAW.iloc[-1]
+                    MINUS_DI = MINUS_DI_RAW.iloc[-1]
+
+                    PLUS_DI15_RAW = talib.PLUS_DI(df15['high'], df15['low'], df15['close'], timeperiod=10)
+                    MINUS_DI15_RAW = talib.MINUS_DI(df15['high'], df15['low'], df15['close'], timeperiod=10)
+                    PLUS_DI15 = PLUS_DI15_RAW.iloc[-1]
+                    MINUS_DI15 = MINUS_DI15_RAW.iloc[-1]
+
+                    MOMENTUM_raw=talib.MOM(df['close'],timeperiod=14)
+                    DIFF_MOM=round(MOMENTUM_raw.iloc[-1]-MOMENTUM_raw.iloc[-2],4)
+
+                    const_1 = 0
+                    const_1_double = 0
+                    upper_one_1 = 0
+                    lower_one_1 = 0
+                    follow_time=0
+                    follow_hour=2
+
+                    for q in range(-1,-50,-1):
+                        if bband_upper_raw.iloc[q] <= df['high'].iloc[q]:
+                            const_1 = q
+                            for double_q in range(-1,-50-q,-1):
+                                if bband_lower_raw.iloc[q+double_q] >= df['low'].iloc[q+double_q]:
+                                    const_1_double=q+double_q
+                                    break
+                            break
+                        if bband_middle_raw.iloc[q] >= df['close'].iloc[q]:
+                            lower_one_1 = lower_one_1 + 1
+                        if bband_middle_raw.iloc[q] <= df['close'].iloc[q]:
+                            upper_one_1 = upper_one_1 + 1
+
+                    const_2 = 0
+                    const_2_double=0
+                    upper_one_2 = 0
+                    lower_one_2 = 0
+                    for h in range(-1,-50, -1):
+                        if bband_lower_raw.iloc[h] >= df['low'].iloc[h]:
+                            const_2 = h
+                            for double_h in range(-1,-50-h,-1):
+                                if bband_upper_raw.iloc[h+double_h] <= df['high'].iloc[h+double_h]:
+                                    const_2_double=h+double_h
+                                    break
+                            break
+                        if bband_middle_raw.iloc[h] >= df['close'].iloc[h]:
+                            lower_one_2 = lower_one_2 + 1
+                        if bband_middle_raw.iloc[h] <= df['close'].iloc[h]:
+                            upper_one_2 = upper_one_2 + 1
+
+                    follow_flag = False
+                    for xx in range(-2, -12 * follow_hour, -1):
+                        if CCI_raw.iloc[xx] < 35 and CCI_raw.iloc[xx - 1] > 35:
+                            NATR = NATR_raw.iloc[xx]
+                            if NATR < 0.6:
+                                NATR_revised = 0.6
+                            elif 0.6 < NATR < 1:
+                                NATR_revised = NATR
+                            elif 1 < NATR:
+                                NATR_revised = 1
+                            NATR_up = 1 + 0.01 * NATR_revised * 1.8
+                            NATR_down = 1 - 0.01 * NATR_revised * 1.8
+                            average_price = (df['close'].iloc[xx] + df['open'].iloc[xx]) / 2
+                            up_price = average_price * NATR_up
+                            down_price = average_price * NATR_down
+
+                            for yy in range(xx, -1, 1):
+                                # print(df['high'].iloc[j])
+                                if df['high'].iloc[yy] > up_price:
+                                    trade_type = 'long'
+                                    reverse_flag = False
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[yy], trade_type)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                                if df['low'].iloc[yy] < down_price:
+                                    trade_type = 'short'
+                                    reverse_flag = True
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[yy], trade_type)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                            if follow_flag == True:
+                                break
+
+                    # =============================== op1상승장 반전될떄 먹는 로직====================================#11월26일은 양봉이고, EMA*1.001보다 작아지는 경우로 했음!! CCI는 업섰고!!
+                    if hold_flag == False and follow_flag==True and op_mode1 == True and CCI<-100 and CCI_before>-100:
+                        target = i  # i를 타겟으로 선정
+                        price_current = binance.fetch_ticker(i)['last']
+                        price_current_buy = price_current
+                        NATR_buy = NATR
+                        STOCH_K_buy = STOCH_K
+                        STOCH_D_buy = STOCH_D
+                        PLUS_DI_buy = PLUS_DI
+                        MINUS_DI_buy = MINUS_DI
+                        MFI_buy=MFI
+                        MFI15_buy=MFI15
+                        ADX_buy = ADX
+                        ADX_BEFORE_buy=ADX_BEFORE
+                        ADX15_buy = ADX15
+                        ADX15_BEFORE_buy=ADX15_BEFORE
+                        PLUS_DI15_buy=PLUS_DI15
+                        MINUS_DI15_buy = MINUS_DI15
+                        CCI_buy = CCI
+                        op_mode1 = True
+                        op_mode2 = False
+                        op_mode3 = False
+                        op_mode4 = False
+
+                        const = const_1
+                        const_d=const_1_double
+                        if lower_one_1 ==0:
+                            upper_lower_ratio=10
+                        else:
+                            upper_lower_ratio=upper_one_1/lower_one_1
+
+                        if ADX15-ADX15_BEFORE<0:
+                            for DI_index in range(-1,-30,-1):
+                                result_index=ADX15_RAW.iloc[DI_index]-ADX15_RAW.iloc[DI_index-1]
+                                if result_index>0:
+                                    PLUS_DI15=PLUS_DI15_RAW.iloc[DI_index]
+                                    MINUS_DI15=MINUS_DI15_RAW.iloc[DI_index]
+                                    PLUS_DI15_buy = PLUS_DI15
+                                    MINUS_DI15_buy = MINUS_DI15
+                                    break
+
+                        #------------------------핵심로직부위------------------------------
+
+
+
+                        # if CCI-CCI_before>0:
+                        #     trade_type='long'
+                        #     reverse_flag=False
+                        #     print("CCI고려")
+
+
+                        signal_now_buy = signal_now
+                        print(target,"ticker", trade_type, "op_mode1/2/3/4", op_mode1, op_mode2,"rise",rise_24h,
+                              "price", price_current, "NATR", round(NATR,2), "PLUS_DI", round(PLUS_DI,1), "MINUS_DI", round(MINUS_DI,1),
+                              "ADX", round(ADX,1), "DIFF_ADX", round(ADX - ADX_BEFORE,1),"pearson",round(pearson_high,2),round(pearson_low,2))
+                        print("DROPS",determinant_fall,determinant_rise)
+                        print("DIFF_MOM",DIFF_MOM,"MFI",round(MFI_buy,1),"CCI",round(CCI_buy,1))
+                        wait_flag = True
+                        time.sleep(0.5)
+                        break
+
+                    follow_flag = False
+                    for xx in range(-2, -12 * follow_hour, -1):
+                        if CCI_raw.iloc[xx] > 65 and CCI_raw.iloc[xx - 1] < 65:
+                            NATR = NATR_raw.iloc[xx]
+                            if NATR < 0.6:
+                                NATR_revised = 0.6
+                            elif 0.6 < NATR < 1:
+                                NATR_revised = NATR
+                            elif 1 < NATR:
+                                NATR_revised = 1
+                            NATR_up = 1 + 0.01 * NATR_revised * 1.8
+                            NATR_down = 1 - 0.01 * NATR_revised * 1.8
+                            average_price = (df['close'].iloc[xx] + df['open'].iloc[xx]) / 2
+                            up_price = average_price * NATR_up
+                            down_price = average_price * NATR_down
+
+                            for yy in range(xx, -1, 1):
+                                # print(df['high'].iloc[j])
+                                if df['high'].iloc[yy] > up_price:
+                                    trade_type = 'long'
+                                    reverse_flag = True
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[j], trade_type, reverse_flag)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                                if df['low'].iloc[yy] < down_price:
+                                    trade_type = 'short'
+                                    reverse_flag = False
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[yy], trade_type, reverse_flag)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                            if follow_flag == True:
+                                break
+
+                    # ===============================op2 하락장반전될때====================================
+                    if hold_flag == False and follow_flag==True and op_mode2 == True and MFI>100 and MFI_before<100:
+                        # price_current >= price_open * 1
+                        target = i  # i를 타겟으로 선정
+                        price_current = binance.fetch_ticker(i)['last']
+                        price_current_buy = price_current
+                        NATR_buy = NATR
+                        STOCH_K_buy = STOCH_K
+                        STOCH_D_buy = STOCH_D
+                        MFI_buy=MFI
+                        MFI15_buy=MFI15
+                        PLUS_DI_buy = PLUS_DI
+                        MINUS_DI_buy = MINUS_DI
+                        ADX_buy = ADX
+                        ADX_BEFORE_buy=ADX_BEFORE
+                        ADX15_buy = ADX15
+                        ADX15_BEFORE_buy=ADX15_BEFORE
+                        PLUS_DI15_buy=PLUS_DI15
+                        MINUS_DI15_buy = MINUS_DI15
+                        CCI_buy = CCI
+                        signal_now_buy = signal_now
+                        op_mode1 = False
+                        op_mode2 = True
+                        op_mode3 = False
+                        op_mode4 = False
+
+                        const = const_2
+                        const_d=const_2_double
+
+                        if upper_one_2 ==0:
+                            upper_lower_ratio=10
+                        else:
+                            upper_lower_ratio=lower_one_2/upper_one_2
+
+                        if ADX15-ADX15_BEFORE<0:
+                            for DI_index in range(-1,-30,-1):
+                                result_index=ADX15_RAW.iloc[DI_index]-ADX15_RAW.iloc[DI_index-1]
+                                if result_index>0:
+                                    PLUS_DI15=PLUS_DI15_RAW.iloc[DI_index]
+                                    MINUS_DI15=MINUS_DI15_RAW.iloc[DI_index]
+                                    PLUS_DI15_buy = PLUS_DI15
+                                    MINUS_DI15_buy = MINUS_DI15
+                                    break
+
+                        #---------------------------------------핵심로직부위---------------------------------------
+
+
+
+
+                        # if CCI-CCI_before<0:
+                        #    trade_type='short'
+                        #    reverse_flag=False
+                        #    print("CCI고려")
+
+                        print(target, "ticker", trade_type, "op_mode1/2/3/4", op_mode1, op_mode2, "rise", rise_24h,
+                              "price", price_current, "NATR", round(NATR, 2), "PLUS_DI", round(PLUS_DI, 1), "MINUS_DI",
+                              round(MINUS_DI, 1),
+                              "ADX", round(ADX, 1), "DIFF_ADX", round(ADX - ADX_BEFORE, 1), "pearson",
+                              round(pearson_high, 2), round(pearson_low, 2))
+                        print("DROPS", determinant_fall, determinant_rise)
+                        print("DIFF_MOM", DIFF_MOM, "MFI", round(MFI_buy, 1), "CCI", round(CCI_buy, 1))
+                        wait_flag = True
+                        time.sleep(0.2)
+                        break
+                    time.sleep(0.2)
+
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓지표중간계산#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            if wait_flag == True:
+                price_current = binance.fetch_ticker(target)['last']
+                df = binance.fetch_ohlcv(symbol=target, timeframe='5m', since=None, limit=50)
+                df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+
+                uncomp = binance.fetch_open_orders(target)
+
+                if len(uncomp) == 0:
+                    sell_flag = True
+                else:
+                    sell_flag = False
+                time.sleep(0.5)
+
+                # print("지표계산중2")
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓매수주문#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            if hold_flag == False and wait_flag == True and complete_flag == True:
+                market=binance.market(target)
+                #-----------------------------------------레버리지량조절--------------------------------
+                leverage=1
+                resp=binance.fapiPrivate_post_leverage({'symbol':market['id'],'leverage':leverage})
+                print("배율확인",resp)
+                #-----------------------------------------레버리지량조절--------------------------------
+                balance_raw = binance.fetch_balance()
+                cash = balance_raw['USDT']['free']
+                if leverage >= 2:
+                    cash=cash*leverage
+                buy_try = binance.fetch_ticker(target)['last']
+                number_amount = cal_amount(cash, target, buy_try)
+
+                print("cash", cash, "target", target, "buy_try", buy_try, "number_amount", number_amount,"leverage",leverage)
+                if number_amount == 0:
+                    op_mode1=False
+                    op_mode2 = False
+                    op_mode3 = False
+                    op_mode4 = False
+                    wait_flag = False
+                    continue
+                while True:
+                    if trade_type == 'long':
+                        resp = binance.create_limit_buy_order(symbol=target, amount=number_amount, price=buy_try)
+                        if resp == None or 'error' in resp:
+                            print("매수주문에러")
+                            time.sleep(1)
+                        else:
+                            print("매수주문이상무")
+                            break
+                    if trade_type == 'short':
+                        resp = binance.create_limit_sell_order(symbol=target, amount=number_amount, price=buy_try)
+                        if resp == None or 'error' in resp:
+                            print("매수주문에러")
+                            time.sleep(1)
+                        else:
+                            print("매수주문이상무")
+                            break
+                print("매수시도", "시각", datetime.datetime.now(), "종목", target, "가격", buy_try)
+                time.sleep(10)
+                id1 = resp['info']['orderId']  # 여기까지 작업 완료
+
+                while True:
+                    uncomp = binance.fetch_open_orders(target)
+                    if len(uncomp) >= 1:
+                        resp2 = binance.cancel_all_orders(target)
+                        time.sleep(3)
+                        price_current = binance.fetch_ticker(target)['last']
+                        if price_current >= buy_try * 1.002 or price_current <= buy_try * 0.998:
+                            print("매수포기")
+                            info = binance.fetch_balance()
+                            info_position = info['info']['positions']
+                            no_position = len(info_position)
+                            target_noslash = target.replace("/", "")
+                            for i in range(0, no_position):
+                                if info_position[i]['symbol'] == target_noslash:
+                                    volume = float(info_position[i]['positionAmt'])
+                                    if volume==0:
+                                        break
+                                    if float(volume) < 0:
+                                        volume = -volume
+                            if volume>0:
+                                print("일부매수처분", "종목", target, "가격", price_current, "수량", volume)
+                                time.sleep(1)
+                                if trade_type == 'long':
+                                    ret_bye = binance.create_market_sell_order(symbol=target, amount=volume)
+                                    print("일부매수처분완료")
+                                elif trade_type == 'short':
+                                    ret_bye = binance.create_market_buy_order(symbol=target, amount=volume)
+                                    print("일부매수처분완료")
+                            wait_flag = False
+                            break
+                        balance_raw = binance.fetch_balance()
+                        cash = balance_raw['USDT']['free']
+                        if leverage >= 2:
+                            cash = cash * leverage
+                        number_amount = cal_amount(cash, target, price_current)
+                        while True:
+                            if trade_type == 'long':
+                                resp = binance.create_limit_buy_order(symbol=target, amount=number_amount,
+                                                                      price=price_current)
+                                if resp == None or 'error' in resp:
+                                    print("매수주문에러")
+                                    time.sleep(1)
+                                else:
+                                    print("매수주문이상무")
+                                    break
+                            if trade_type == 'short':
+                                resp = binance.create_limit_sell_order(symbol=target, amount=number_amount,
+                                                                       price=price_current)
+                                if resp == None or 'error' in resp:
+                                    print("매수주문에러")
+                                    time.sleep(1)
+                                else:
+                                    print("매수주문이상무")
+                                    break
+                        id1 = resp['info']['orderId']
+                        print("매수재시도","price",price_current,"amount",number_amount)
+                        time.sleep(10)
+                        continue
+
+                    elif len(uncomp) == 0:
+                        print("매수완료", price_current)
+                        time_now = datetime.datetime.now()
+                        time_buy_clock = time_now.strftime("%Y%m%d %H:%M:%S")
+                        time_buy_day=time_now.strftime('%m-%d')
+                        time_buy_time = time_now.strftime('%H:%M')
+                        time_buy = time.time()
+                        time_pass = time.time() % 300
+                        time_rest = 300 - time_pass
+                        break
+                    time.sleep(5)
+
+                # if wait_flag==False:
+                #    break
+
+                if wait_flag == True:
+                    time.sleep(10)
+                    print("매수가격체크중..")
+                    int_coin_price, volume = get_my_price_amount(target, market_type)
+                    if volume < 0:
+                        volume = -volume
+
+                    print("구매가격", int_coin_price, "수량", volume)
+
+                    if NATR < 0.6:
+                        NATR_revised = 0.6
+                    elif 0.6 < NATR < 1:
+                        NATR_revised = NATR
+                    elif 1 < NATR:
+                        NATR_revised = 1
+
+
+                    NATR_coeff = 1 + 0.01 * NATR_revised*1.8
+                    NATR_coeff_reverse = 1 - 0.01 * NATR_revised*1.8
+
+                    if trade_type == 'short':
+                        coeff = NATR_coeff_reverse
+                    elif trade_type == 'long':
+                        coeff = NATR_coeff
+                    # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓매도주문#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+                    price_sell = price_target(buy_try, coeff)
+                    print("매도가격", price_sell)
+                    while True:
+                        if trade_type == 'long':
+                            ret = binance.create_limit_sell_order(target, volume, price_sell)
+                            if ret == None or 'error' in ret:
+                                print("매도주문에러")
+                                time.sleep(1)
+                            else:
+                                print("매도주문이상무")
+                                break
+                        if trade_type == 'short':
+                            ret = binance.create_limit_buy_order(target, volume, price_sell)
+                            if ret == None or 'error' in ret:
+                                print("매도주문에러")
+                                time.sleep(1)
+                            else:
+                                print("매도주문이상무")
+                                break
+                    print("매도주문", "시각", datetime.datetime.now(), "종목", target, "가격", price_sell)
+                    id2 = ret['info']['orderId']
+                    hold_flag = True
+                    complete_flag = False
+                    price_current = binance.fetch_ticker(target)['last']
+                    time.sleep(5)
+
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓처분주문#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            time.sleep(0.5)
+
+            if wait_flag == True and hold_flag == True and complete_flag == False and sell_flag == False and (
+                    (trade_type == 'long' and (price_current <= int_coin_price*(1-(1-NATR_coeff_reverse)*0.9)))
+                    or
+                    (trade_type == 'short' and (price_current >= int_coin_price*(1+(NATR_coeff-1)*0.9)))
+                    ):  # PSAR이 반전되면 팔거나, 5분 남은 시간내에 2퍼 넘으면 판다
+                if trade_type=='long':
+                    price_exit=int_coin_price*(1-(1-NATR_coeff_reverse)*0.9)
+                elif trade_type=='short':
+                    price_exit=int_coin_price*(1+(NATR_coeff-1)*0.9)
+                print("현재가격:", price_current,"탈출가격:", price_exit,"MFI:",MFI,"CCI:",CCI,"BBAND_UP:",bband_upper,"BBAND_DOWN:",bband_lower)
+                price_current = binance.fetch_ticker(target)['last']
+                exit_order = binance.cancel_all_orders(target)
+                time.sleep(0.2)
+                info = binance.fetch_balance()
+                info_position = info['info']['positions']
+                no_position = len(info_position)
+                target_noslash = target.replace("/", "")
+                for i in range(0, no_position):
+                    if info_position[i]['symbol'] == target_noslash:
+                        volume = info_position[i]['positionAmt']
+                        if float(volume) < 0:
+                            volume = -float(volume)
+                print("처분조건","종목",target,"가격",price_current,"수량",volume)
+                time.sleep(0.2)
+                if trade_type == 'long':
+                    ret_bye = binance.create_market_sell_order(symbol=target, amount=volume)
+                    print("처분주문이상무")
+                elif trade_type == 'short':
+                    ret_bye = binance.create_market_buy_order(symbol=target, amount=volume)
+                    print("처분주문이상무")
+                print("처분시도", "시각", datetime.datetime.now(), "종목", target, "가격", price_current,"수량",volume)
+                time.sleep(5)
+                #------------------------------ 처분완료 후 정산------------------
+                cash_before = cash_end
+                balance_raw = binance.fetch_balance()
+                cash_end = balance_raw['USDT']['free']
+                if op_mode1 == True:
+                    op = "op_mode1"
+                elif op_mode2 == True:
+                    op = "op_mode2"
+                elif op_mode3 == True:
+                    op = "op_mode3"
+                elif op_mode4 == True:
+                    op = "op_mode4"
+
+                if warning_signal == 0:
+                    fluctuation_status = "normal"
+                elif warning_signal == 1:
+                    fluctuation_status = "hike"
+                elif warning_signal == -1:
+                    fluctuation_status = "fall"
+
+                print("처분완료", "수익률", cash_end / cash_start, cash_end)
+                skip_list = target
+                time_sell = time.time()
+                time_pass = time.time() % 300
+                time_rest = 300 - time_pass
+                TOKEN = '1744986343:AAHTV06Gl_ODUgN0PReK_AGztFrtqa5WoTM'
+                mc = '1828960972'
+                bot = telepot.Bot(TOKEN)
+                msg = [round(cash_end / cash_start * 100 - 100, 1),"/",round(cash_end / cash_before * 100 - 100, 1),target,op,trade_type,reverse_flag,DIFF_MOM,time_buy_time]
+                bot.sendMessage(mc, msg)
+                data_to_insert = {'target': target, 'time_day': time_buy_day, 'time_time': time_buy_time,
+                                  'sum': round(cash_end / cash_start * 100 - 100, 1),
+                                  'each': round(cash_end / cash_before * 100 - 100, 1), 'rise': rise_24h, 'op': op,
+                                  'trade_type': trade_type,'reverse':reverse_flag,'follow':follow_flag,'follow_time':follow_time, 'NATR': round(NATR_buy, 3),'MFI':round(MFI_buy,1),'MFI15':round(MFI15_buy,1),'CCI':round(CCI_buy,1),'ADX': round(ADX_buy, 3),
+                                  'ADX15': round(ADX15_buy, 3),
+                                  'DIFF_ADX': round(ADX_buy - ADX_BEFORE_buy, 2),
+                                  'DIFF_ADX15': round(ADX15_buy - ADX15_BEFORE_buy, 2), 'PDMI': round(PLUS_DI_buy, 3),
+                                  'MDMI': round(MINUS_DI_buy, 3), 'PDMI15': round(PLUS_DI15_buy, 3),
+                                  'MDMI15': round(MINUS_DI15_buy, 3), 'PEARSON_HIGH': round(pearson_high, 2),
+                                  'PEARSON_LOW': round(pearson_low, 2),
+                                  'SLOPE_C_HIGH': round(regr_slope_percent_high, 2),
+                                  'SLOPE_C_LOW': round(regr_slope_percent_low, 2), 'SLOPE_B': round(slope_bband, 4),
+                                  'STDDEV': round(STDDEV, 3), 'UL_RATIO': round(upper_lower_ratio, 2),
+                                  'CONST': const,'CONST_D':const_d, 'STATUS': fluctuation_status, 'CASH': round(cash_end, 2),
+                                  'LEVERAGE': leverage, 'VOLUME': volume_now / volume_ma_now,
+                                  'DROPS_F': determinant_fall, 'DROPS_R': determinant_rise, 'DIFF_MOM':DIFF_MOM}
+                trade_history = trade_history.append(data_to_insert, ignore_index=True)
+                trade_history.to_excel(filename)
+
+                time.sleep(time_rest + 5)
+                hold_flag = False
+                complete_flag = True
+                wait_flag = False
+                sell_flag = False
+                reverse_flag=False
+                op_mode1 = False
+                op_mode2 = False
+                op_mode3 = False
+                op_mode4 = False
+                fall_flag=False
+                rise_flag=False
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓거래완료확인#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            time.sleep(0.2)
+
+            if hold_flag == True and wait_flag == True and complete_flag == False and sell_flag == True:
+                uncomp = binance.fetch_open_orders(target)
+                if len(uncomp) == 0:
+                    cash_before = cash_end
+                    balance_raw = binance.fetch_balance()
+                    cash_end = balance_raw['USDT']['free']
+                    print("매도완료", "수익률", cash_end / cash_start, cash_end)
+                    skip_list=target
+                    time_sell = time.time()
+                    time_pass = time.time() % 300
+                    time_rest = 300 - time_pass
+                    TOKEN = '1744986343:AAHTV06Gl_ODUgN0PReK_AGztFrtqa5WoTM'
+                    mc = '1828960972'
+                    bot = telepot.Bot(TOKEN)
+                    if op_mode1 == True:
+                        op = "op_mode1"
+                    elif op_mode2 == True:
+                        op = "op_mode2"
+                    elif op_mode3 == True:
+                        op = "op_mode3"
+                    elif op_mode4 == True:
+                        op = "op_mode4"
+
+                    if warning_signal == 0:
+                        fluctuation_status = "normal"
+                    elif warning_signal == 1:
+                        fluctuation_status = "hike"
+                    elif warning_signal == -1:
+                        fluctuation_status = "fall"
+                    msg = [round(cash_end / cash_start * 100 - 100, 1),"/",round(cash_end / cash_before * 100 - 100, 1),target, op, trade_type,reverse_flag,DIFF_MOM,time_buy_time]
+                    bot.sendMessage(mc, msg)
+                    data_to_insert = {'target': target, 'time_day': time_buy_day, 'time_time': time_buy_time,
+                                      'sum': round(cash_end / cash_start * 100 - 100, 1),
+                                      'each': round(cash_end / cash_before * 100 - 100, 1), 'rise': rise_24h, 'op': op,
+                                      'trade_type': trade_type,'reverse':reverse_flag,'follow':follow_flag,'follow_time':follow_time, 'NATR': round(NATR_buy, 3),'MFI':round(MFI_buy,1),'MFI15':round(MFI15_buy,1),'CCI':round(CCI_buy,1), 'ADX': round(ADX_buy, 3),'ADX15':round(ADX15_buy,3),
+                                      'DIFF_ADX': round(ADX_buy - ADX_Bimport pandas as pd
+import numpy as np
+import time
+import datetime
+import json
+import math
+import json
+import time
+import requests
+import datetime
+import traceback
+import talib
+import ccxt
+import os
+import uuid
+import hashlib
+from urllib.parse import urlencode
+import telepot
+import telegram
+import pandas
+import openpyxl
+from scipy import stats
+from urllib.parse import urlencode
+import requests
+
+
+
+
+
+
+skip_list=""
+def get_top_k(n, market_type):
+    urgent_down = 0
+    urgent_up = 0
+    urgent_up_diff = 0
+    urgent_down_diff = 0
+    urgent_up_count = 0
+    urgent_down_count = 0
+    up_list = []
+    down_list = []
+    middle_list = []
+    markets = binance.fetch_tickers()
+    price_change_rate_sum=0
+    warning=0
+    ranking=[]
+
+
+    if market_type == 'future':
+        for market in markets.keys():
+            if market == 'NUUSDT' or market == 'KEEPUSDT'or market.find("_")>=0 or market==skip_list: # 종전에 먹었던 종목이나 211231 이란 코드가 들어간 종목 BZRXUSDT는 제외 시킨다.
+                continue
+            try:
+                df = binance.fetch_ohlcv(symbol=market, timeframe='5m', since=None, limit=50)
+                df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+                NATR_raw = talib.NATR(df['high'], df['low'], df['close'], timeperiod=10)
+                NATR = NATR_raw.iloc[-1]
+                MFI_raw = talib.MFI(df['high'], df['low'], df['close'], df['volume'], timeperiod=14)
+                MFI = MFI_raw.iloc[-1]
+                MFI_before = MFI_raw.iloc[-2]
+                ADX_RAW = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
+                ADX = ADX_RAW.iloc[-1]
+                ADX_BEFORE = ADX_RAW.iloc[-2]
+                CCI_raw = talib.CCI(df['high'], df['low'], df['close'], timeperiod=14)
+                CCI = CCI_raw.iloc[-1]
+                price_change_rate = float(markets[market]['info']['priceChangePercent'])
+                ranking.append([market,price_change_rate])
+            except:
+                continue
+            if market.endswith("/USDT") and market.find("UP") <= 0 and market.find("DOWN") <= 0 and 0<float(markets[market]['info']['priceChangePercent'])<20 and NATR > 0.4 and ADX<25 and (CCI>100 or -100>CCI): #24시간 상승률이 20퍼 이내이고, NATR 0.5% 이하인 것을 추려냄
+                PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                PLUS_DI = PLUS_DI_RAW.iloc[-1]
+                MINUS_DI = MINUS_DI_RAW.iloc[-1]
+
+                if PLUS_DI>MINUS_DI and ADX>20 and ADX-ADX_BEFORE>0:
+                    urgent_up=1
+                else:
+                    urgent_up=0
+                up_list.append([market, price_change_rate,urgent_up,ADX])
+
+
+
+            if market.endswith("/USDT") and market.find("UP") <= 0 and market.find("DOWN") <= 0 and -20<float(markets[market]['info']['priceChangePercent'])<0 and NATR > 0.4 and ADX<25 and (CCI>100 or -100>CCI): #24시간 상승률이 0퍼 이하이고, NATR 0.5% 이하인 것을 추려냄
+                PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+                PLUS_DI = PLUS_DI_RAW.iloc[-1]
+                MINUS_DI = MINUS_DI_RAW.iloc[-1]
+
+                if PLUS_DI<MINUS_DI and ADX>20 and ADX-ADX_BEFORE>0:
+                    urgent_down=1
+                else:
+                    urgent_down=0
+                down_list.append([market, price_change_rate,urgent_down,ADX])
+
+    main_coins=["BTC/USDT","ETH/USDT","SOL/USDT"]
+    determinant_fall=0
+    determinant_rise = 0
+    for main_coin in main_coins:
+        df = binance.fetch_ohlcv(symbol=main_coin, timeframe='5m', since=None, limit=50)
+        df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+        ADX_RAW = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
+        ADX = ADX_RAW.iloc[-1]
+        ADX_BEFORE = ADX_RAW.iloc[-2]
+        PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+        MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=14)
+        PLUS_DI = PLUS_DI_RAW.iloc[-1]
+        MINUS_DI = MINUS_DI_RAW.iloc[-1]
+        df_pearson = df.iloc[-6:-1]
+        pearson = df_pearson.corr(method='pearson')
+        pearson_high = pearson['high'][0]
+        pearson_low = pearson['low'][0]
+        if ADX>25 and ADX-ADX_BEFORE>0 and MINUS_DI>PLUS_DI:
+            determinant_fall=determinant_fall+1
+        if ADX>25 and ADX-ADX_BEFORE>0 and MINUS_DI<PLUS_DI:
+            determinant_rise=determinant_rise+1
+
+
+    ranking.sort(key=lambda x: x[1], reverse=True)  # 전체를 소팅한다.
+    ranking_top10=ranking[:10]
+    ranking_bottom10 = ranking[-10:]
+
+    ranking_top10_list=[]
+    ranking_bottom10_list = []
+
+    for i in range(0,10):
+        ranking_top10_list.append(ranking_top10[i][0])
+        ranking_bottom10_list.append(ranking_bottom10[i][0])
+
+    #print("중간확인:",ranking_top10_list)
+    num_up=len(up_list) #상승중인 것 갯수
+    num_down=len(down_list) #하락중인 것 갯수
+    if num_down<5:  #총 10개 종목을 가져오고, 5/5로 이븐하게 나누지만 안될경우는 상승이나 하락 쪽에 좀 더 몰아준다.
+        num_up=10-num_down
+        num_down=num_down
+    elif num_down>=5:
+        num_down=5
+        num_up=5
+    elif num_up<5:
+        num_up=num_up
+        num_down=10-num_up
+    elif num_up>=5:
+        num_up=5
+        num_down=5
+
+    up_list.sort(key=lambda x: x[1], reverse=True) #상승중인것을 내림차순 정렬한다.
+    up_list = up_list[:num_up]
+    down_list.sort(key=lambda x: x[1]) #하락중인것을 내림 차순 정렬 한다.
+    down_list = down_list[:num_down]
+    up_list_real=len(up_list)
+    down_list_real=len(down_list)
+
+    for i in up_list:
+        if i[2]==1:
+            urgent_up_count=urgent_up_count+1
+
+    for i in down_list:
+        if i[2]==1:
+            urgent_down_count=urgent_down_count+1
+
+    if down_list_real-1<=urgent_down_count and down_list_real>=3: #하락 중인것들이 -10프로 보다 낮으면 폭락 장세라고 판단하고 warning signal을 -1을 준다.
+        warning_signal=-1
+    elif up_list_real-1<=urgent_up_count and up_list_real>=3:
+        warning_signal=1
+    else:
+        warning_signal=0
+
+    top_k_list = []
+
+    for i in up_list:
+        top_k_list.append(i[0])
+
+    for t in ranking_top10_list:  # 거래하지 않을 것들은 LIST에서 뺀다.
+        if t in top_k_list:
+            top_k_list.remove(t)
+
+    for i in down_list:
+        top_k_list.append(i[0])
+
+    for t in ranking_bottom10_list:  # 거래하지 않을 것들은 LIST에서 뺀다.
+        if t in top_k_list:
+            top_k_list.remove(t)
+
+
+    return top_k_list[:n], warning_signal,determinant_fall,determinant_rise,ranking_top10_list,ranking_bottom10_list # 리스트와 워닝 시그널을 출력 해준다.
+
+
+def price_target(price_origin, profit): # 원래 가격과 매도 가격을 계산해주는 함수이다.
+    number_result = 0
+    for i in range(10): #10씩 곱해가면서 반올림햇을 때 값이 같아지는지를 확인한다.
+        b1 = price_origin * (10 ** i)
+        result = round(b1) - b1
+        # print(result)
+        if math.isclose(round(b1), b1) == True:  # 부동 소수점 문제로 인해서 math.isclose 기능을 이용하여 비교해야 한다.
+            number_result = i
+            break
+    price_candidate = round(price_origin * profit, number_result)
+    return price_candidate # 매도할 가격을 출력 해준다.
+
+
+def cal_amount(usdt_balance, target, price): #매수할 양을 계산해준다.
+    amount_wannaknow = float(binance.fetch_bids_asks(target)[target]['info']['askQty'])
+    for k in range(10):
+        b2 = amount_wannaknow * (10 ** k)
+        result2 = round(b2) - b2
+        if math.isclose(round(b2), b2) == True: #bids.asks에 걸려있는 양을 보고 소수점 몇째 자리인지 계산한다.
+            number = k
+            break
+
+    portion = 0.95
+    usdt_trade = usdt_balance * portion
+    amount = math.floor(usdt_trade / price * (10 ** number)) / (10 ** number)   # 전체 금액의 98프로 중에서 얼마나 살지를 결정한다.
+    return amount
+
+
+def get_my_price_amount(target, market_type): # 얼마에 살지와 가격을 결정해준다.
+    target_remove_slash = target.replace("/", "")
+    target_remove_slash_USDT = target.replace("/USDT", "")
+    balance = binance.fetch_balance()
+    if market_type == 'future':
+        positions = balance['info']['positions']
+        for position in positions:
+            if position["symbol"] == target_remove_slash:
+                amount = float(position['positionAmt'])
+                price = float(position['entryPrice'])
+    elif market_type == 'market':
+        amount_wannaknow = float(binance.fetch_bids_asks(target)[target]['info']['askQty'])
+        for k in range(10):
+            b2 = amount_wannaknow * (10 ** k)
+            result2 = round(b2) - b2
+            if math.isclose(round(b2), b2) == True:
+                number = k
+                break
+        amount = math.floor(balance[target_remove_slash_USDT]['free'] * (10 ** number)) / (10 ** number)
+        last_order = binance.fetch_closed_orders(target)
+        price = last_order[-1]['average']
+
+    return price, amount
+
+
+with open("binance.txt") as f: #binance.txt파일을 불러와서 로그인한다.
+    lines = f.readlines()
+    api_key = lines[0].strip()
+    secret = lines[1].strip()
+
+############################필수셋팅부위########################################
+
+
+market_type = 'future'  # 선물 거래를 할시 아래 두줄을 사용한다.
+binance = ccxt.binance(config={'apiKey': api_key, 'secret': secret, 'enableRateLimit': True,
+                               'options': {'defaultType': market_type}})  # 바이낸스 선물 로그인
+
+# market_type='market'   # 현물 거래를 할시 아래 두줄을 사용한다.
+# binance = ccxt.binance(config={'apiKey': api_key, 'secret': secret})  # 바이낸스 현물 로그인
+
+############################필수셋팅부위########################################
+
+
+
+while True:
+    filename='trade_history.xlsx'
+    trade_history=pd.read_excel(filename,index_col=0)
+    balance_raw = binance.fetch_balance() # 잔고를 확인
+    cash_start=trade_history.iloc[0]['CASH']
+    cash_end = balance_raw['USDT']['free']  # 잔고 조회
+    time_flag = False
+    complete_flag = True
+    profit = 1.02
+    hold_flag = False
+    wait_flag = False
+    forbid_flag = False
+    time_flag = True
+    list_flag = True
+    sell_flag = False
+    op_mode1 = False
+    op_mode2 = False
+    op_mode3 = False
+    op_mode4 = False
+    reverse_flag=False
+    fall_flag=False
+    rise_flag=False
+    normal_flag=False
+    warning_signal=0
+    z = 0
+    list_time_before = 0
+    remove_list = ['BTC/USDT', 'ETH/USDT', 'ADA/USDT','BTCDOM/USDT','ETC/USDT','SOL/USDT','DODO/USDT'] #거래하지 말아야할 리스트이다.
+    # remove_list = get_top_k(1,market_type)
+    print("start", cash_end)
+
+    try:
+        while time_flag == True:
+
+            j = 1
+            k = 15  # 상승량 상위 5개를 기준으로 한다.
+            fluctuation_status=""
+            cash_end = balance_raw['USDT']['free']
+            if market_type == 'market':
+                k = 3
+            while complete_flag == True and wait_flag == False:
+                urgent_down = 0
+                urgent_up = 0
+                urgent_up_diff = 0
+                urgent_down_diff = 0
+                fluctuation_status = ""
+
+                top_list, warning_signal,determinant_fall,determinant_rise,ranking_top10_list,ranking_bottom10_list= get_top_k(k, market_type)  # 거래량 상위 몇개 종목을 가져올지 결정
+
+                if warning_signal == 0:
+                    fluctuation_status = "normal"
+                elif warning_signal == 1:
+                    fluctuation_status = "hike"
+                elif warning_signal == -1:
+                    fluctuation_status = "fall"
+
+                # print("티커선정중")
+                for t in remove_list:  # 거래하지 않을 것들은 LIST에서 뺀다.
+                    if t in top_list:
+                        top_list.remove(t)
+
+                list_time_later = time.time()
+                if list_time_later - list_time_before > 60 * 60:  # 한시간이 넘으면 상승률 리스트 보내주기
+                    list_flag = True
+
+                if list_flag == True:  # 상승률 보낸지 1시간 지나면 아래와 같이 log에다가 상승률 리스트를 보내준다.
+                    rise_list = []
+                    for targets in ranking_top10_list:
+                        markets = binance.fetch_tickers()
+                        rise_24h = round(float(markets[targets]['percentage']), 1)
+                        rise_list.append([targets, rise_24h,"/"])
+                    for targets in ranking_bottom10_list:
+                        markets = binance.fetch_tickers()
+                        rise_24h = round(float(markets[targets]['percentage']), 1)
+                        rise_list.append([targets, rise_24h,"/"])
+
+                    rise_list.append(fluctuation_status)
+                    TOKEN = '1944172418:AAGmErvA8U4yCJ6jvjpQQQNNxPjFNNLpe9k'
+                    mc = '1828960972'
+                    bot = telepot.Bot(TOKEN)
+                    msg = rise_list
+                    bot.sendMessage(mc, msg)
+                    list_time_before = time.time()
+                    list_flag = False
+                print("--------------------------------next--------------------------------------------")
+                print("조건에해당하는리스트:",top_list)  # 조건에 해당하는 종목 10개를 컴퓨터에 뿌려준다
+                print("상위10개:", ranking_top10_list)  # 상위 10개를 컴퓨터에 뿌려준다
+                print("하위10개:", ranking_bottom10_list)  # 하위 10개를 컴퓨터에 뿌려준다
+                print("status:",fluctuation_status,"/",warning_signal,"DROP_F/R:",determinant_fall,"/",determinant_rise,"time:",datetime.datetime.now())
+                if determinant_fall<3 and determinant_rise<3:
+                    normal_flag=True
+
+                if determinant_fall==3 and normal_flag==True:
+                    print("비트/이더/솔라나 급락중")
+                    fall_flag=True
+                    normal_flag=False
+
+                if determinant_rise==3 and normal_flag==True:
+                    print("비트/이더/솔라나 급등중")
+                    rise_flag=True
+                    normal_flag=False
+
+
+
+                for i in top_list:
+                    markets = binance.fetch_tickers()
+                    rise_24h = markets[i]['percentage']  # 24h 기준으로 20보다 높으면 long전략, 낮으면 short 전략을 간다
+                    op_mode1 = True  # 상승용인데.. 생각보다 상승 그리 잘 안되는듯
+                    op_mode2 = True  # 보합장용이므로 부적합
+                    op_mode3 = True  # 하락장용이므로 맞을듯
+                    op_mode4 = True  # 상승반전인데.. 애매하다.. 어떡할지..
+
+                    if market_type == 'market':  # 현물 시장은 무조건 long
+                        trade_type = 'long'
+                    price_current = binance.fetch_ticker(i)['last']  ## 여기까지 작성 완성
+
+                    df = binance.fetch_ohlcv(symbol=i, timeframe='5m', since=None, limit=50)
+                    df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+                    df15 = binance.fetch_ohlcv(symbol=i, timeframe='15m', since=None, limit=50)
+                    df15 = pd.DataFrame(data=df15, columns=["datetime", "open", "high", "low", "close", "volume"])
+                    df_pearson = df.iloc[-6:-1]
+                    pearson = df_pearson.corr(method='pearson')
+                    pearson_high = pearson['high'][0]
+                    pearson_low = pearson['low'][0]
+                    df_len=len(df_pearson)
+                    df_index = list(range(1,df_len+1))
+                    regr_high = stats.linregress(df_index, df_pearson['high'])
+                    regr_low = stats.linregress(df_index, df_pearson['low'])
+                    regr_slope_percent_high = regr_high.slope / price_current * 100
+                    regr_slope_percent_low = regr_low.slope / price_current * 100
+                    df.set_index('datetime', inplace=True)
+                    macd, macdsignal, macdhist = talib.MACD(df['close'], fastperiod=10, slowperiod=20, signalperiod=9)
+
+                    signal_now = macdhist.iloc[-1]
+                    signal_before = macdhist.iloc[-2]
+                    signal_before_before = macdhist.iloc[-3]
+                    signal_before_before_before = macdhist.iloc[-4]
+
+                    STDDEV_raw=talib.STDDEV(df['close'],timeperiod=10)
+                    STDDEV=STDDEV_raw.iloc[-1]/price_current*100
+
+                    CCI_raw = talib.CCI(df['high'], df['low'], df['close'], timeperiod=20)
+                    CCI = CCI_raw.iloc[-1]
+                    CCI_before = CCI_raw.iloc[-2]
+                    CCI_before2 = CCI_raw.iloc[-3]
+                    CCI_raw.index = pd.to_datetime(CCI_raw.index, unit='ms') + datetime.timedelta(hours=9)
+
+                    bband_upper_raw,bband_middle_raw,bband_lower_raw=talib.BBANDS(df['close'],timeperiod=15, nbdevup=2,nbdevdn=2,matype=0)
+                    bband_upper=bband_upper_raw.iloc[-1]
+                    bband_upper_before= bband_upper_raw.iloc[-2]
+                    bband_middle = bband_middle_raw.iloc[-1]
+                    bband_middle_before = bband_middle_raw.iloc[-2]
+                    slope_bband=(bband_middle-bband_middle_before)/bband_middle*100
+                    bband_lower = bband_lower_raw.iloc[-1]
+                    bband_lower_before = bband_lower_raw.iloc[-2]
+
+                    MFI_raw = talib.MFI(df['high'], df['low'], df['close'],df['volume'], timeperiod=14)
+                    MFI = MFI_raw.iloc[-1]
+                    MFI_before = MFI_raw.iloc[-2]
+                    MFI_before2 = MFI_raw.iloc[-3]
+                    MFI_raw.index = pd.to_datetime(MFI_raw.index, unit='ms') + datetime.timedelta(hours=9)
+
+                    MFI15_raw = talib.MFI(df15['high'], df15['low'], df15['close'], df15['volume'], timeperiod=14)
+                    MFI15 = MFI_raw.iloc[-1]
+                    MFI15_before = MFI_raw.iloc[-2]
+                    MFI15_before2 = MFI_raw.iloc[-3]
+
+
+                    price_open = df['open'].iloc[-1]
+                    price_high = df['high'].iloc[-1]
+                    price_low = df['low'].iloc[-1]
+
+                    volume_now = df['volume'].iloc[-1]
+                    volume_before = df['volume'].iloc[-2]
+
+                    volume_ma_raw = talib.MA(df['volume'], timeperiod=10, matype=0)
+                    volume_ma_now = volume_ma_raw.iloc[-1]
+                    volume_ma_before = volume_ma_raw.iloc[-2]
+
+                    NATR_raw = talib.NATR(df['high'], df['low'], df['close'], timeperiod=10)
+                    NATR = NATR_raw.iloc[-1]
+
+                    ADX_RAW = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
+                    ADX = ADX_RAW.iloc[-1]
+                    ADX_BEFORE = ADX_RAW.iloc[-2]
+                    ADX_BEFORE_BEFORE = ADX_RAW.iloc[-3]
+
+                    ADX15_RAW = talib.ADX(df15['high'], df15['low'], df15['close'], timeperiod=14)
+                    ADX15 = ADX15_RAW.iloc[-1]
+                    ADX15_BEFORE = ADX15_RAW.iloc[-2]
+                    ADX15_BEFORE_BEFORE = ADX15_RAW.iloc[-3]
+
+                    slowk, slowd = talib.STOCH(df['high'], df['low'], df['close'], fastk_period=10, slowk_period=3,
+                                               slowd_period=3)
+                    STOCH_K = slowk.iloc[-1]
+                    STOCH_D = slowd.iloc[-1]
+
+                    PLUS_DI_RAW = talib.PLUS_DI(df['high'], df['low'], df['close'], timeperiod=10)
+                    MINUS_DI_RAW = talib.MINUS_DI(df['high'], df['low'], df['close'], timeperiod=10)
+                    PLUS_DI = PLUS_DI_RAW.iloc[-1]
+                    MINUS_DI = MINUS_DI_RAW.iloc[-1]
+
+                    PLUS_DI15_RAW = talib.PLUS_DI(df15['high'], df15['low'], df15['close'], timeperiod=10)
+                    MINUS_DI15_RAW = talib.MINUS_DI(df15['high'], df15['low'], df15['close'], timeperiod=10)
+                    PLUS_DI15 = PLUS_DI15_RAW.iloc[-1]
+                    MINUS_DI15 = MINUS_DI15_RAW.iloc[-1]
+
+                    MOMENTUM_raw=talib.MOM(df['close'],timeperiod=14)
+                    DIFF_MOM=round(MOMENTUM_raw.iloc[-1]-MOMENTUM_raw.iloc[-2],4)
+
+                    const_1 = 0
+                    const_1_double = 0
+                    upper_one_1 = 0
+                    lower_one_1 = 0
+                    follow_time=0
+                    follow_hour=2
+
+                    for q in range(-1,-50,-1):
+                        if bband_upper_raw.iloc[q] <= df['high'].iloc[q]:
+                            const_1 = q
+                            for double_q in range(-1,-50-q,-1):
+                                if bband_lower_raw.iloc[q+double_q] >= df['low'].iloc[q+double_q]:
+                                    const_1_double=q+double_q
+                                    break
+                            break
+                        if bband_middle_raw.iloc[q] >= df['close'].iloc[q]:
+                            lower_one_1 = lower_one_1 + 1
+                        if bband_middle_raw.iloc[q] <= df['close'].iloc[q]:
+                            upper_one_1 = upper_one_1 + 1
+
+                    const_2 = 0
+                    const_2_double=0
+                    upper_one_2 = 0
+                    lower_one_2 = 0
+                    for h in range(-1,-50, -1):
+                        if bband_lower_raw.iloc[h] >= df['low'].iloc[h]:
+                            const_2 = h
+                            for double_h in range(-1,-50-h,-1):
+                                if bband_upper_raw.iloc[h+double_h] <= df['high'].iloc[h+double_h]:
+                                    const_2_double=h+double_h
+                                    break
+                            break
+                        if bband_middle_raw.iloc[h] >= df['close'].iloc[h]:
+                            lower_one_2 = lower_one_2 + 1
+                        if bband_middle_raw.iloc[h] <= df['close'].iloc[h]:
+                            upper_one_2 = upper_one_2 + 1
+
+                    follow_flag = False
+                    for xx in range(-2, -12 * follow_hour, -1):
+                        if CCI_raw.iloc[xx] < 35 and CCI_raw.iloc[xx - 1] > 35:
+                            NATR = NATR_raw.iloc[xx]
+                            if NATR < 0.6:
+                                NATR_revised = 0.6
+                            elif 0.6 < NATR < 1:
+                                NATR_revised = NATR
+                            elif 1 < NATR:
+                                NATR_revised = 1
+                            NATR_up = 1 + 0.01 * NATR_revised * 1.8
+                            NATR_down = 1 - 0.01 * NATR_revised * 1.8
+                            average_price = (df['close'].iloc[xx] + df['open'].iloc[xx]) / 2
+                            up_price = average_price * NATR_up
+                            down_price = average_price * NATR_down
+
+                            for yy in range(xx, -1, 1):
+                                # print(df['high'].iloc[j])
+                                if df['high'].iloc[yy] > up_price:
+                                    trade_type = 'long'
+                                    reverse_flag = False
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[yy], trade_type)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                                if df['low'].iloc[yy] < down_price:
+                                    trade_type = 'short'
+                                    reverse_flag = True
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[yy], trade_type)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                            if follow_flag == True:
+                                break
+
+                    # =============================== op1상승장 반전될떄 먹는 로직====================================#11월26일은 양봉이고, EMA*1.001보다 작아지는 경우로 했음!! CCI는 업섰고!!
+                    if hold_flag == False and follow_flag==True and op_mode1 == True and CCI<-100 and CCI_before>-100:
+                        target = i  # i를 타겟으로 선정
+                        price_current = binance.fetch_ticker(i)['last']
+                        price_current_buy = price_current
+                        NATR_buy = NATR
+                        STOCH_K_buy = STOCH_K
+                        STOCH_D_buy = STOCH_D
+                        PLUS_DI_buy = PLUS_DI
+                        MINUS_DI_buy = MINUS_DI
+                        MFI_buy=MFI
+                        MFI15_buy=MFI15
+                        ADX_buy = ADX
+                        ADX_BEFORE_buy=ADX_BEFORE
+                        ADX15_buy = ADX15
+                        ADX15_BEFORE_buy=ADX15_BEFORE
+                        PLUS_DI15_buy=PLUS_DI15
+                        MINUS_DI15_buy = MINUS_DI15
+                        CCI_buy = CCI
+                        op_mode1 = True
+                        op_mode2 = False
+                        op_mode3 = False
+                        op_mode4 = False
+
+                        const = const_1
+                        const_d=const_1_double
+                        if lower_one_1 ==0:
+                            upper_lower_ratio=10
+                        else:
+                            upper_lower_ratio=upper_one_1/lower_one_1
+
+                        if ADX15-ADX15_BEFORE<0:
+                            for DI_index in range(-1,-30,-1):
+                                result_index=ADX15_RAW.iloc[DI_index]-ADX15_RAW.iloc[DI_index-1]
+                                if result_index>0:
+                                    PLUS_DI15=PLUS_DI15_RAW.iloc[DI_index]
+                                    MINUS_DI15=MINUS_DI15_RAW.iloc[DI_index]
+                                    PLUS_DI15_buy = PLUS_DI15
+                                    MINUS_DI15_buy = MINUS_DI15
+                                    break
+
+                        #------------------------핵심로직부위------------------------------
+
+
+
+                        # if CCI-CCI_before>0:
+                        #     trade_type='long'
+                        #     reverse_flag=False
+                        #     print("CCI고려")
+
+
+                        signal_now_buy = signal_now
+                        print(target,"ticker", trade_type, "op_mode1/2/3/4", op_mode1, op_mode2,"rise",rise_24h,
+                              "price", price_current, "NATR", round(NATR,2), "PLUS_DI", round(PLUS_DI,1), "MINUS_DI", round(MINUS_DI,1),
+                              "ADX", round(ADX,1), "DIFF_ADX", round(ADX - ADX_BEFORE,1),"pearson",round(pearson_high,2),round(pearson_low,2))
+                        print("DROPS",determinant_fall,determinant_rise)
+                        print("DIFF_MOM",DIFF_MOM,"MFI",round(MFI_buy,1),"CCI",round(CCI_buy,1))
+                        wait_flag = True
+                        time.sleep(0.5)
+                        break
+
+                    follow_flag = False
+                    for xx in range(-2, -12 * follow_hour, -1):
+                        if CCI_raw.iloc[xx] > 65 and CCI_raw.iloc[xx - 1] < 65:
+                            NATR = NATR_raw.iloc[xx]
+                            if NATR < 0.6:
+                                NATR_revised = 0.6
+                            elif 0.6 < NATR < 1:
+                                NATR_revised = NATR
+                            elif 1 < NATR:
+                                NATR_revised = 1
+                            NATR_up = 1 + 0.01 * NATR_revised * 1.8
+                            NATR_down = 1 - 0.01 * NATR_revised * 1.8
+                            average_price = (df['close'].iloc[xx] + df['open'].iloc[xx]) / 2
+                            up_price = average_price * NATR_up
+                            down_price = average_price * NATR_down
+
+                            for yy in range(xx, -1, 1):
+                                # print(df['high'].iloc[j])
+                                if df['high'].iloc[yy] > up_price:
+                                    trade_type = 'long'
+                                    reverse_flag = True
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[j], trade_type, reverse_flag)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                                if df['low'].iloc[yy] < down_price:
+                                    trade_type = 'short'
+                                    reverse_flag = False
+                                    follow_flag = True
+                                    # print('----------follow로직 적용------------')
+                                    # print("매수시각:", MFI_raw.index[xx], "MFI값:", MFI_raw.iloc[xx])
+                                    # print("매도시각", MFI_raw.index[yy], trade_type, reverse_flag)
+                                    follow_time = CCI_raw.index[xx]
+                                    break
+                            if follow_flag == True:
+                                break
+
+                    # ===============================op2 하락장반전될때====================================
+                    if hold_flag == False and follow_flag==True and op_mode2 == True and MFI>100 and MFI_before<100:
+                        # price_current >= price_open * 1
+                        target = i  # i를 타겟으로 선정
+                        price_current = binance.fetch_ticker(i)['last']
+                        price_current_buy = price_current
+                        NATR_buy = NATR
+                        STOCH_K_buy = STOCH_K
+                        STOCH_D_buy = STOCH_D
+                        MFI_buy=MFI
+                        MFI15_buy=MFI15
+                        PLUS_DI_buy = PLUS_DI
+                        MINUS_DI_buy = MINUS_DI
+                        ADX_buy = ADX
+                        ADX_BEFORE_buy=ADX_BEFORE
+                        ADX15_buy = ADX15
+                        ADX15_BEFORE_buy=ADX15_BEFORE
+                        PLUS_DI15_buy=PLUS_DI15
+                        MINUS_DI15_buy = MINUS_DI15
+                        CCI_buy = CCI
+                        signal_now_buy = signal_now
+                        op_mode1 = False
+                        op_mode2 = True
+                        op_mode3 = False
+                        op_mode4 = False
+
+                        const = const_2
+                        const_d=const_2_double
+
+                        if upper_one_2 ==0:
+                            upper_lower_ratio=10
+                        else:
+                            upper_lower_ratio=lower_one_2/upper_one_2
+
+                        if ADX15-ADX15_BEFORE<0:
+                            for DI_index in range(-1,-30,-1):
+                                result_index=ADX15_RAW.iloc[DI_index]-ADX15_RAW.iloc[DI_index-1]
+                                if result_index>0:
+                                    PLUS_DI15=PLUS_DI15_RAW.iloc[DI_index]
+                                    MINUS_DI15=MINUS_DI15_RAW.iloc[DI_index]
+                                    PLUS_DI15_buy = PLUS_DI15
+                                    MINUS_DI15_buy = MINUS_DI15
+                                    break
+
+                        #---------------------------------------핵심로직부위---------------------------------------
+
+
+
+
+                        # if CCI-CCI_before<0:
+                        #    trade_type='short'
+                        #    reverse_flag=False
+                        #    print("CCI고려")
+
+                        print(target, "ticker", trade_type, "op_mode1/2/3/4", op_mode1, op_mode2, "rise", rise_24h,
+                              "price", price_current, "NATR", round(NATR, 2), "PLUS_DI", round(PLUS_DI, 1), "MINUS_DI",
+                              round(MINUS_DI, 1),
+                              "ADX", round(ADX, 1), "DIFF_ADX", round(ADX - ADX_BEFORE, 1), "pearson",
+                              round(pearson_high, 2), round(pearson_low, 2))
+                        print("DROPS", determinant_fall, determinant_rise)
+                        print("DIFF_MOM", DIFF_MOM, "MFI", round(MFI_buy, 1), "CCI", round(CCI_buy, 1))
+                        wait_flag = True
+                        time.sleep(0.2)
+                        break
+                    time.sleep(0.2)
+
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓지표중간계산#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            if wait_flag == True:
+                price_current = binance.fetch_ticker(target)['last']
+                df = binance.fetch_ohlcv(symbol=target, timeframe='5m', since=None, limit=50)
+                df = pd.DataFrame(data=df, columns=["datetime", "open", "high", "low", "close", "volume"])
+
+                uncomp = binance.fetch_open_orders(target)
+
+                if len(uncomp) == 0:
+                    sell_flag = True
+                else:
+                    sell_flag = False
+                time.sleep(0.5)
+
+                # print("지표계산중2")
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓매수주문#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            if hold_flag == False and wait_flag == True and complete_flag == True:
+                market=binance.market(target)
+                #-----------------------------------------레버리지량조절--------------------------------
+                leverage=1
+                resp=binance.fapiPrivate_post_leverage({'symbol':market['id'],'leverage':leverage})
+                print("배율확인",resp)
+                #-----------------------------------------레버리지량조절--------------------------------
+                balance_raw = binance.fetch_balance()
+                cash = balance_raw['USDT']['free']
+                if leverage >= 2:
+                    cash=cash*leverage
+                buy_try = binance.fetch_ticker(target)['last']
+                number_amount = cal_amount(cash, target, buy_try)
+
+                print("cash", cash, "target", target, "buy_try", buy_try, "number_amount", number_amount,"leverage",leverage)
+                if number_amount == 0:
+                    op_mode1=False
+                    op_mode2 = False
+                    op_mode3 = False
+                    op_mode4 = False
+                    wait_flag = False
+                    continue
+                while True:
+                    if trade_type == 'long':
+                        resp = binance.create_limit_buy_order(symbol=target, amount=number_amount, price=buy_try)
+                        if resp == None or 'error' in resp:
+                            print("매수주문에러")
+                            time.sleep(1)
+                        else:
+                            print("매수주문이상무")
+                            break
+                    if trade_type == 'short':
+                        resp = binance.create_limit_sell_order(symbol=target, amount=number_amount, price=buy_try)
+                        if resp == None or 'error' in resp:
+                            print("매수주문에러")
+                            time.sleep(1)
+                        else:
+                            print("매수주문이상무")
+                            break
+                print("매수시도", "시각", datetime.datetime.now(), "종목", target, "가격", buy_try)
+                time.sleep(10)
+                id1 = resp['info']['orderId']  # 여기까지 작업 완료
+
+                while True:
+                    uncomp = binance.fetch_open_orders(target)
+                    if len(uncomp) >= 1:
+                        resp2 = binance.cancel_all_orders(target)
+                        time.sleep(3)
+                        price_current = binance.fetch_ticker(target)['last']
+                        if price_current >= buy_try * 1.002 or price_current <= buy_try * 0.998:
+                            print("매수포기")
+                            info = binance.fetch_balance()
+                            info_position = info['info']['positions']
+                            no_position = len(info_position)
+                            target_noslash = target.replace("/", "")
+                            for i in range(0, no_position):
+                                if info_position[i]['symbol'] == target_noslash:
+                                    volume = float(info_position[i]['positionAmt'])
+                                    if volume==0:
+                                        break
+                                    if float(volume) < 0:
+                                        volume = -volume
+                            if volume>0:
+                                print("일부매수처분", "종목", target, "가격", price_current, "수량", volume)
+                                time.sleep(1)
+                                if trade_type == 'long':
+                                    ret_bye = binance.create_market_sell_order(symbol=target, amount=volume)
+                                    print("일부매수처분완료")
+                                elif trade_type == 'short':
+                                    ret_bye = binance.create_market_buy_order(symbol=target, amount=volume)
+                                    print("일부매수처분완료")
+                            wait_flag = False
+                            break
+                        balance_raw = binance.fetch_balance()
+                        cash = balance_raw['USDT']['free']
+                        if leverage >= 2:
+                            cash = cash * leverage
+                        number_amount = cal_amount(cash, target, price_current)
+                        while True:
+                            if trade_type == 'long':
+                                resp = binance.create_limit_buy_order(symbol=target, amount=number_amount,
+                                                                      price=price_current)
+                                if resp == None or 'error' in resp:
+                                    print("매수주문에러")
+                                    time.sleep(1)
+                                else:
+                                    print("매수주문이상무")
+                                    break
+                            if trade_type == 'short':
+                                resp = binance.create_limit_sell_order(symbol=target, amount=number_amount,
+                                                                       price=price_current)
+                                if resp == None or 'error' in resp:
+                                    print("매수주문에러")
+                                    time.sleep(1)
+                                else:
+                                    print("매수주문이상무")
+                                    break
+                        id1 = resp['info']['orderId']
+                        print("매수재시도","price",price_current,"amount",number_amount)
+                        time.sleep(10)
+                        continue
+
+                    elif len(uncomp) == 0:
+                        print("매수완료", price_current)
+                        time_now = datetime.datetime.now()
+                        time_buy_clock = time_now.strftime("%Y%m%d %H:%M:%S")
+                        time_buy_day=time_now.strftime('%m-%d')
+                        time_buy_time = time_now.strftime('%H:%M')
+                        time_buy = time.time()
+                        time_pass = time.time() % 300
+                        time_rest = 300 - time_pass
+                        break
+                    time.sleep(5)
+
+                # if wait_flag==False:
+                #    break
+
+                if wait_flag == True:
+                    time.sleep(10)
+                    print("매수가격체크중..")
+                    int_coin_price, volume = get_my_price_amount(target, market_type)
+                    if volume < 0:
+                        volume = -volume
+
+                    print("구매가격", int_coin_price, "수량", volume)
+
+                    if NATR < 0.6:
+                        NATR_revised = 0.6
+                    elif 0.6 < NATR < 1:
+                        NATR_revised = NATR
+                    elif 1 < NATR:
+                        NATR_revised = 1
+
+
+                    NATR_coeff = 1 + 0.01 * NATR_revised*1.8
+                    NATR_coeff_reverse = 1 - 0.01 * NATR_revised*1.8
+
+                    if trade_type == 'short':
+                        coeff = NATR_coeff_reverse
+                    elif trade_type == 'long':
+                        coeff = NATR_coeff
+                    # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓매도주문#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+                    price_sell = price_target(buy_try, coeff)
+                    print("매도가격", price_sell)
+                    while True:
+                        if trade_type == 'long':
+                            ret = binance.create_limit_sell_order(target, volume, price_sell)
+                            if ret == None or 'error' in ret:
+                                print("매도주문에러")
+                                time.sleep(1)
+                            else:
+                                print("매도주문이상무")
+                                break
+                        if trade_type == 'short':
+                            ret = binance.create_limit_buy_order(target, volume, price_sell)
+                            if ret == None or 'error' in ret:
+                                print("매도주문에러")
+                                time.sleep(1)
+                            else:
+                                print("매도주문이상무")
+                                break
+                    print("매도주문", "시각", datetime.datetime.now(), "종목", target, "가격", price_sell)
+                    id2 = ret['info']['orderId']
+                    hold_flag = True
+                    complete_flag = False
+                    price_current = binance.fetch_ticker(target)['last']
+                    time.sleep(5)
+
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓처분주문#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            time.sleep(0.5)
+
+            if wait_flag == True and hold_flag == True and complete_flag == False and sell_flag == False and (
+                    (trade_type == 'long' and (price_current <= int_coin_price*(1-(1-NATR_coeff_reverse)*0.9)))
+                    or
+                    (trade_type == 'short' and (price_current >= int_coin_price*(1+(NATR_coeff-1)*0.9)))
+                    ):  # PSAR이 반전되면 팔거나, 5분 남은 시간내에 2퍼 넘으면 판다
+                if trade_type=='long':
+                    price_exit=int_coin_price*(1-(1-NATR_coeff_reverse)*0.9)
+                elif trade_type=='short':
+                    price_exit=int_coin_price*(1+(NATR_coeff-1)*0.9)
+                print("현재가격:", price_current,"탈출가격:", price_exit,"MFI:",MFI,"CCI:",CCI,"BBAND_UP:",bband_upper,"BBAND_DOWN:",bband_lower)
+                price_current = binance.fetch_ticker(target)['last']
+                exit_order = binance.cancel_all_orders(target)
+                time.sleep(0.2)
+                info = binance.fetch_balance()
+                info_position = info['info']['positions']
+                no_position = len(info_position)
+                target_noslash = target.replace("/", "")
+                for i in range(0, no_position):
+                    if info_position[i]['symbol'] == target_noslash:
+                        volume = info_position[i]['positionAmt']
+                        if float(volume) < 0:
+                            volume = -float(volume)
+                print("처분조건","종목",target,"가격",price_current,"수량",volume)
+                time.sleep(0.2)
+                if trade_type == 'long':
+                    ret_bye = binance.create_market_sell_order(symbol=target, amount=volume)
+                    print("처분주문이상무")
+                elif trade_type == 'short':
+                    ret_bye = binance.create_market_buy_order(symbol=target, amount=volume)
+                    print("처분주문이상무")
+                print("처분시도", "시각", datetime.datetime.now(), "종목", target, "가격", price_current,"수량",volume)
+                time.sleep(5)
+                #------------------------------ 처분완료 후 정산------------------
+                cash_before = cash_end
+                balance_raw = binance.fetch_balance()
+                cash_end = balance_raw['USDT']['free']
+                if op_mode1 == True:
+                    op = "op_mode1"
+                elif op_mode2 == True:
+                    op = "op_mode2"
+                elif op_mode3 == True:
+                    op = "op_mode3"
+                elif op_mode4 == True:
+                    op = "op_mode4"
+
+                if warning_signal == 0:
+                    fluctuation_status = "normal"
+                elif warning_signal == 1:
+                    fluctuation_status = "hike"
+                elif warning_signal == -1:
+                    fluctuation_status = "fall"
+
+                print("처분완료", "수익률", cash_end / cash_start, cash_end)
+                skip_list = target
+                time_sell = time.time()
+                time_pass = time.time() % 300
+                time_rest = 300 - time_pass
+                TOKEN = '1744986343:AAHTV06Gl_ODUgN0PReK_AGztFrtqa5WoTM'
+                mc = '1828960972'
+                bot = telepot.Bot(TOKEN)
+                msg = [round(cash_end / cash_start * 100 - 100, 1),"/",round(cash_end / cash_before * 100 - 100, 1),target,op,trade_type,reverse_flag,DIFF_MOM,time_buy_time]
+                bot.sendMessage(mc, msg)
+                data_to_insert = {'target': target, 'time_day': time_buy_day, 'time_time': time_buy_time,
+                                  'sum': round(cash_end / cash_start * 100 - 100, 1),
+                                  'each': round(cash_end / cash_before * 100 - 100, 1), 'rise': rise_24h, 'op': op,
+                                  'trade_type': trade_type,'reverse':reverse_flag,'follow':follow_flag,'follow_time':follow_time, 'NATR': round(NATR_buy, 3),'MFI':round(MFI_buy,1),'MFI15':round(MFI15_buy,1),'CCI':round(CCI_buy,1),'ADX': round(ADX_buy, 3),
+                                  'ADX15': round(ADX15_buy, 3),
+                                  'DIFF_ADX': round(ADX_buy - ADX_BEFORE_buy, 2),
+                                  'DIFF_ADX15': round(ADX15_buy - ADX15_BEFORE_buy, 2), 'PDMI': round(PLUS_DI_buy, 3),
+                                  'MDMI': round(MINUS_DI_buy, 3), 'PDMI15': round(PLUS_DI15_buy, 3),
+                                  'MDMI15': round(MINUS_DI15_buy, 3), 'PEARSON_HIGH': round(pearson_high, 2),
+                                  'PEARSON_LOW': round(pearson_low, 2),
+                                  'SLOPE_C_HIGH': round(regr_slope_percent_high, 2),
+                                  'SLOPE_C_LOW': round(regr_slope_percent_low, 2), 'SLOPE_B': round(slope_bband, 4),
+                                  'STDDEV': round(STDDEV, 3), 'UL_RATIO': round(upper_lower_ratio, 2),
+                                  'CONST': const,'CONST_D':const_d, 'STATUS': fluctuation_status, 'CASH': round(cash_end, 2),
+                                  'LEVERAGE': leverage, 'VOLUME': volume_now / volume_ma_now,
+                                  'DROPS_F': determinant_fall, 'DROPS_R': determinant_rise, 'DIFF_MOM':DIFF_MOM}
+                trade_history = trade_history.append(data_to_insert, ignore_index=True)
+                trade_history.to_excel(filename)
+
+                time.sleep(time_rest + 5)
+                hold_flag = False
+                complete_flag = True
+                wait_flag = False
+                sell_flag = False
+                reverse_flag=False
+                op_mode1 = False
+                op_mode2 = False
+                op_mode3 = False
+                op_mode4 = False
+                fall_flag=False
+                rise_flag=False
+            # ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓거래완료확인#↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+            time.sleep(0.2)
+
+            if hold_flag == True and wait_flag == True and complete_flag == False and sell_flag == True:
+                uncomp = binance.fetch_open_orders(target)
+                if len(uncomp) == 0:
+                    cash_before = cash_end
+                    balance_raw = binance.fetch_balance()
+                    cash_end = balance_raw['USDT']['free']
+                    print("매도완료", "수익률", cash_end / cash_start, cash_end)
+                    skip_list=target
+                    time_sell = time.time()
+                    time_pass = time.time() % 300
+                    time_rest = 300 - time_pass
+                    TOKEN = '1744986343:AAHTV06Gl_ODUgN0PReK_AGztFrtqa5WoTM'
+                    mc = '1828960972'
+                    bot = telepot.Bot(TOKEN)
+                    if op_mode1 == True:
+                        op = "op_mode1"
+                    elif op_mode2 == True:
+                        op = "op_mode2"
+                    elif op_mode3 == True:
+                        op = "op_mode3"
+                    elif op_mode4 == True:
+                        op = "op_mode4"
+
+                    if warning_signal == 0:
+                        fluctuation_status = "normal"
+                    elif warning_signal == 1:
+                        fluctuation_status = "hike"
+                    elif warning_signal == -1:
+                        fluctuation_status = "fall"
+                    msg = [round(cash_end / cash_start * 100 - 100, 1),"/",round(cash_end / cash_before * 100 - 100, 1),target, op, trade_type,reverse_flag,DIFF_MOM,time_buy_time]
+                    bot.sendMessage(mc, msg)
+                    data_to_insert = {'target': target, 'time_day': time_buy_day, 'time_time': time_buy_time,
+                                      'sum': round(cash_end / cash_start * 100 - 100, 1),
+                                      'each': round(cash_end / cash_before * 100 - 100, 1), 'rise': rise_24h, 'op': op,
+                                      'trade_type': trade_type,'reverse':reverse_flag,'follow':follow_flag,'follow_time':follow_time, 'NATR': round(NATR_buy, 3),'MFI':round(MFI_buy,1),'MFI15':round(MFI15_buy,1),'CCI':round(CCI_buy,1), 'ADX': round(ADX_buy, 3),'ADX15':round(ADX15_buy,3),
+                                      'DIFF_ADX': round(ADX_buy - ADX_BEFORE_buy, 2),'DIFF_ADX15':round(ADX15_buy-ADX15_BEFORE_buy,2), 'PDMI': round(PLUS_DI_buy, 3),
+                                      'MDMI': round(MINUS_DI_buy, 3),'PDMI15':round(PLUS_DI15_buy,3),'MDMI15':round(MINUS_DI15_buy,3), 'PEARSON_HIGH': round(pearson_high, 2),
+                                      'PEARSON_LOW': round(pearson_low, 2), 'SLOPE_C_HIGH': round(regr_slope_percent_high, 2),'SLOPE_C_LOW': round(regr_slope_percent_low, 2),'SLOPE_B':round(slope_bband,4),'STDDEV':round(STDDEV,3),'UL_RATIO':round(upper_lower_ratio,2),
+                                      'CONST': const,'CONST_D':const_d, 'STATUS': fluctuation_status,'CASH':round(cash_end,2),'LEVERAGE':leverage,'VOLUME':volume_now/volume_ma_now,'DROPS_F':determinant_fall,'DROPS_R':determinant_rise,'DIFF_MOM':DIFF_MOM}
+                    trade_history = trade_history.append(data_to_insert, ignore_index=True)
+                    trade_history.to_excel(filename)
+                    hold_flag = False
+                    complete_flag = True
+                    wait_flag = False
+                    sell_flag = False
+                    reverse_flag=False
+                    op_mode1 = False
+                    op_mode2 = False
+                    op_mode3 = False
+                    op_mode4 = False
+                    fall_flag = False
+                    rise_flag = False
+                    time.sleep(time_rest + 5)
+            time.sleep(0.5)
+
+    except:
+        print("error")
+        exit_order = binance.cancel_all_orders(target)
+        try:
+            results = binance.fetch_positions()
+            for result in results:
+                exit_amount = float(result['info']['positionAmt'])
+                exit_symbol = result['symbol']
+                if exit_amount > 0 or exit_amount < 0:
+                    print("에러 처분할 종목:", exit_symbol, "에러 처분할 양:", exit_amount)
+                    break
+            if exit_amount > 0:
+                print("HAVE_LONG")
+                exit_result = binance.create_market_sell_order(symbol=exit_symbol, amount=exit_amount)
+                print(exit_result)
+            elif exit_amount < 0:
+                print("HAVE_SHORT")
+                exit_result = binance.create_market_buy_order(symbol=exit_symbol, amount=-exit_amount)
+                print(exit_result)
+            elif exit_amount == 0:
+                print("NOTHING")
+        except:
+            print('처분에러')
+        TOKEN = '1744986343:AAHTV06Gl_ODUgN0PReK_AGztFrtqa5WoTM'
+        mc = '1828960972'
+        bot = telepot.Bot(TOKEN)
+        bot.sendMessage(mc, "Error.Hurry!!")
+        hold_flag = False
+        complete_flag = True
+        wait_flag = False
+        sell_flag = False
+        reverse_flag = False
+        op_mode1 = False
+        op_mode2 = False
+        op_mode3 = False
+        op_mode4 = False
+        fall_flag = False
+        rise_flag=FalseEFORE_buy, 2),'DIFF_ADX15':round(ADX15_buy-ADX15_BEFORE_buy,2), 'PDMI': round(PLUS_DI_buy, 3),
+                                      'MDMI': round(MINUS_DI_buy, 3),'PDMI15':round(PLUS_DI15_buy,3),'MDMI15':round(MINUS_DI15_buy,3), 'PEARSON_HIGH': round(pearson_high, 2),
+                                      'PEARSON_LOW': round(pearson_low, 2), 'SLOPE_C_HIGH': round(regr_slope_percent_high, 2),'SLOPE_C_LOW': round(regr_slope_percent_low, 2),'SLOPE_B':round(slope_bband,4),'STDDEV':round(STDDEV,3),'UL_RATIO':round(upper_lower_ratio,2),
+                                      'CONST': const,'CONST_D':const_d, 'STATUS': fluctuation_status,'CASH':round(cash_end,2),'LEVERAGE':leverage,'VOLUME':volume_now/volume_ma_now,'DROPS_F':determinant_fall,'DROPS_R':determinant_rise,'DIFF_MOM':DIFF_MOM}
+                    trade_history = trade_history.append(data_to_insert, ignore_index=True)
+                    trade_history.to_excel(filename)
+                    hold_flag = False
+                    complete_flag = True
+                    wait_flag = False
+                    sell_flag = False
+                    reverse_flag=False
+                    op_mode1 = False
+                    op_mode2 = False
+                    op_mode3 = False
+                    op_mode4 = False
+                    fall_flag = False
+                    rise_flag = False
+                    time.sleep(time_rest + 5)
+            time.sleep(0.5)
+
+    except:
+        print("error")
+        exit_order = binance.cancel_all_orders(target)
+        try:
+            results = binance.fetch_positions()
+            for result in results:
+                exit_amount = float(result['info']['positionAmt'])
+                exit_symbol = result['symbol']
+                if exit_amount > 0 or exit_amount < 0:
+                    print("에러 처분할 종목:", exit_symbol, "에러 처분할 양:", exit_amount)
+                    break
+            if exit_amount > 0:
+                print("HAVE_LONG")
+                exit_result = binance.create_market_sell_order(symbol=exit_symbol, amount=exit_amount)
+                print(exit_result)
+            elif exit_amount < 0:
+                print("HAVE_SHORT")
+                exit_result = binance.create_market_buy_order(symbol=exit_symbol, amount=-exit_amount)
+                print(exit_result)
+            elif exit_amount == 0:
+                print("NOTHING")
+        except:
+            print('처분에러')
+        TOKEN = '1744986343:AAHTV06Gl_ODUgN0PReK_AGztFrtqa5WoTM'
+        mc = '1828960972'
+        bot = telepot.Bot(TOKEN)
+        bot.sendMessage(mc, "Error.Hurry!!")
+        hold_flag = False
+        complete_flag = True
+        wait_flag = False
+        sell_flag = False
+        reverse_flag = False
+        op_mode1 = False
+        op_mode2 = False
+        op_mode3 = False
+        op_mode4 = False
+        fall_flag = False
+        rise_flag=False
